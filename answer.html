@@ -1,15 +1,19 @@
 <style>
 textarea {
   width: 100%;
-  height: 40%;
+  height: 20%;
+}
+video: {
+  width: 320px;
+  height: 240px;
 }
 </style>
 <script src='adapter-latest.js'></script>
+<video id='localVideo' autoplay></video>
 <video id='remoteVideo' autoplay></video>
 <div>
-  <p>PASTE OFFER</p>
+  <p>PASTE OFFER<button id='paste'>set remote description</button><input type='checkbox' id='gum'>add stream</input></p>
   <textarea id='offer'></textarea>
-  <button id='paste'>set remote description</button>
 </div>
 <div>
   <p>ANSWER</p>
@@ -19,6 +23,7 @@ textarea {
 <div id='err'></div>
 <script>
 var pc = new RTCPeerConnection();
+var localStream;
 pc.onicecandidate = function(event) {
   if (!event.candidate) {
     var sdp = pc.localDescription.sdp;
@@ -41,7 +46,17 @@ document.getElementById('paste').onclick = function() {
   pc.setRemoteDescription({type: 'offer', sdp: sdp})
   .then(function() {
     console.log('yay');
-    return pc.createAnswer();
+    if (document.getElementById('gum').checked) {
+      return navigator.mediaDevices.getUserMedia({audio: true, video: true})
+      .then(function(stream) {
+        localStream = stream;
+        localVideo.srcObject = stream;
+        pc.addStream(stream);
+        return pc.createAnswer();
+      });
+    } else {
+      return pc.createAnswer();
+    }
   })
   .then(function(answer) {
      return pc.setLocalDescription(answer); 
