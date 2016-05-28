@@ -1,0 +1,59 @@
+<style>
+textarea {
+  width: 100%;
+  height: 40%;
+}
+</style>
+<script src='adapter-latest.js'></script>
+<div>
+  <p>OFFER</p>
+  <textarea id='offer'></textarea>
+</div>
+<div>
+  <p>PASTE ANSWER</p>
+  <textarea id='answer'></textarea>
+  <button id='paste'>set remote description</button>
+</div>
+<div id='ice'></div>
+<div id='err'></div>
+<p>Paste it to <a href='answer.html'>answer.html</a>, copy the answer back.</p>
+<script>
+var pc = new RTCPeerConnection();
+pc.onicecandidate = function(event) {
+  console.log('cand', event.candidate);
+  if (!event.candidate) {
+    var sdp = pc.localDescription.sdp;
+    if (sdp.indexOf('a=end-of-candidates') === -1) {
+      sdp += 'a=end-of-candidates\r\n';
+    }
+    document.getElementById('offer').value = sdp;
+  }
+}
+pc.oniceconnectionstatechange = function() {
+  ice.innerText = pc.iceConnectionState;
+};
+navigator.mediaDevices.getUserMedia({video: true})
+.then(function(stream) {
+  pc.addStream(stream);
+  return pc.createOffer();
+})
+.then(function(offer) {
+  pc.setLocalDescription(offer);
+})
+.catch(function(e) {
+  console.log(e);
+  err.innerText = e.toString();
+})
+
+document.getElementById('paste').onclick = function() {
+  var sdp = document.getElementById('answer').value;
+  pc.setRemoteDescription({type: 'answer', sdp: sdp})
+  .then(function() {
+    console.log('SRD ok');
+  })
+  .catch(function(e) {
+    console.log(e);
+    err.innerText = e.toString();
+  });
+};
+</script>

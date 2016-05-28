@@ -1,0 +1,54 @@
+<style>
+textarea {
+  width: 100%;
+  height: 40%;
+}
+</style>
+<script src='adapter-latest.js'></script>
+<video id='remoteVideo' autoplay></video>
+<div>
+  <p>PASTE OFFER</p>
+  <textarea id='offer'></textarea>
+  <button id='paste'>set remote description</button>
+</div>
+<div>
+  <p>ANSWER</p>
+  <textarea id='answer'></textarea>
+</div>
+<div id='ice'></div>
+<div id='err'></div>
+<script>
+var pc = new RTCPeerConnection();
+pc.onicecandidate = function(event) {
+  if (!event.candidate) {
+    var sdp = pc.localDescription.sdp;
+    if (sdp.indexOf('a=end-of-candidates') === -1) {
+      sdp += 'a=end-of-candidates\r\n';
+    }
+    document.getElementById('answer').value = sdp;
+    
+  }
+}
+pc.oniceconnectionstatechange = function() {
+  ice.innerText = pc.iceConnectionState;
+};
+pc.onaddstream = function(event) {
+    remoteVideo.srcObject = event.stream;
+};
+
+document.getElementById('paste').onclick = function() {
+  var sdp = document.getElementById('offer').value;
+  pc.setRemoteDescription({type: 'offer', sdp: sdp})
+  .then(function() {
+    console.log('yay');
+    return pc.createAnswer();
+  })
+  .then(function(answer) {
+     return pc.setLocalDescription(answer); 
+   })
+  .catch(function(e) {
+    console.log(e);
+    err.innerText = e.toString();
+  });
+}
+</script>

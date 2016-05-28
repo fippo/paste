@@ -1,0 +1,1 @@
+minimalist copy-paste SDP
