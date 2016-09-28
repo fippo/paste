@@ -775,23 +775,23 @@ var chromeShim = {
       });
     }
 
+    ['createOffer', 'createAnswer'].forEach(function(method) {
+      var nativeMethod = webkitRTCPeerConnection.prototype[method];
+      webkitRTCPeerConnection.prototype[method] = function() {
+        var self = this;
+        if (arguments.length < 1 || (arguments.length === 1 &&
+            typeof arguments[0] === 'object')) {
+          var opts = arguments.length === 1 ? arguments[0] : undefined;
+          return new Promise(function(resolve, reject) {
+            nativeMethod.apply(self, [resolve, reject, opts]);
+          });
+        }
+        return nativeMethod.apply(this, arguments);
+      };
+    });
+
     // add promise support -- natively available in Chrome 51
     if (browserDetails.version < 51) {
-      ['createOffer', 'createAnswer'].forEach(function(method) {
-        var nativeMethod = webkitRTCPeerConnection.prototype[method];
-        webkitRTCPeerConnection.prototype[method] = function() {
-          var self = this;
-          if (arguments.length < 1 || (arguments.length === 1 &&
-              typeof arguments[0] === 'object')) {
-            var opts = arguments.length === 1 ? arguments[0] : undefined;
-            return new Promise(function(resolve, reject) {
-              nativeMethod.apply(self, [resolve, reject, opts]);
-            });
-          }
-          return nativeMethod.apply(this, arguments);
-        };
-      });
-
       ['setLocalDescription', 'setRemoteDescription', 'addIceCandidate']
           .forEach(function(method) {
             var nativeMethod = webkitRTCPeerConnection.prototype[method];
@@ -816,14 +816,6 @@ var chromeShim = {
           });
     }
 
-    // support for addIceCandidate(null)
-    var nativeAddIceCandidate =
-        RTCPeerConnection.prototype.addIceCandidate;
-    RTCPeerConnection.prototype.addIceCandidate = function() {
-      return arguments[0] === null ? Promise.resolve()
-          : nativeAddIceCandidate.apply(this, arguments);
-    };
-
     // shim implicit creation of RTCSessionDescription/RTCIceCandidate
     ['setLocalDescription', 'setRemoteDescription', 'addIceCandidate']
         .forEach(function(method) {
@@ -834,6 +826,14 @@ var chromeShim = {
             return nativeMethod.apply(this, arguments);
           };
         });
+
+    // support for addIceCandidate(null)
+    var nativeAddIceCandidate =
+        RTCPeerConnection.prototype.addIceCandidate;
+    RTCPeerConnection.prototype.addIceCandidate = function() {
+      return arguments[0] === null ? Promise.resolve()
+          : nativeAddIceCandidate.apply(this, arguments);
+    };
   },
 
   // Attach a media stream to an element.
@@ -990,15 +990,15 @@ module.exports = function() {
     };
   };
 
-  var getUserMedia_ = function(constraints, onSuccess, onError) {
-    shimConstraints_(constraints, function(c) {
-      navigator.webkitGetUserMedia(c, onSuccess, function(e) {
-        onError(shimError_(e));
+  if (!navigator.getUserMedia) {
+    navigator.getUserMedia = function(constraints, onSuccess, onError) {
+      shimConstraints_(constraints, function(c) {
+        navigator.webkitGetUserMedia(c, onSuccess, function(e) {
+          onError(shimError_(e));
+        });
       });
-    });
-  };
-
-  navigator.getUserMedia = getUserMedia_;
+    };
+  }
 
   // Returns the result of getUserMedia as a Promise.
   var getUserMediaPromise_ = function(constraints) {
@@ -1152,17 +1152,24 @@ var edgeShim = {
             break;
         }
       }
+      this.usingBundle = config && config.bundlePolicy === 'max-bundle';
+
       if (config && config.iceServers) {
         // Edge does not like
         // 1) stun:
         // 2) turn: that does not have all of turn:host:port?transport=udp
-        this.iceOptions.iceServers = config.iceServers.filter(function(server) {
+        var iceServers = JSON.parse(JSON.stringify(config.iceServers));
+        this.iceOptions.iceServers = iceServers.filter(function(server) {
           if (server && server.urls) {
-            server.urls = server.urls.filter(function(url) {
+            var urls = server.urls;
+            if (typeof urls === 'string') {
+              urls = [urls];
+            }
+            urls = urls.filter(function(url) {
               return url.indexOf('turn:') === 0 &&
                   url.indexOf('transport=udp') !== -1;
             })[0];
-            return !!server.urls;
+            return !!urls;
           }
           return false;
         });
@@ -1320,11 +1327,6 @@ var edgeShim = {
               event.candidate.candidate = SDPUtils.writeCandidate(cand);
             }
 
-            var complete = self.transceivers.every(function(transceiver) {
-              return transceiver.iceGatherer &&
-                  transceiver.iceGatherer.state === 'completed';
-            });
-
             // update local description.
             var sections = SDPUtils.splitSections(self.localDescription.sdp);
             if (event.candidate.candidate.indexOf('typ endOfCandidates')
@@ -1336,6 +1338,11 @@ var edgeShim = {
                   'a=end-of-candidates\r\n';
             }
             self.localDescription.sdp = sections.join('');
+
+            var complete = self.transceivers.every(function(transceiver) {
+              return transceiver.iceGatherer &&
+                  transceiver.iceGatherer.state === 'completed';
+            });
 
             // Emit candidate if localDescription is set.
             // Also emits null candidate when all gatherers are complete.
@@ -1466,17 +1473,21 @@ var edgeShim = {
                   // ice-lite only includes host candidates in the SDP so we can
                   // use setRemoteCandidates (which implies an
                   // RTCIceCandidateComplete)
-                  iceTransport.setRemoteCandidates(cands);
+                  if (cands.length) {
+                    iceTransport.setRemoteCandidates(cands);
+                  }
                 }
-                iceTransport.start(iceGatherer, remoteIceParameters,
-                    isIceLite ? 'controlling' : 'controlled');
-
                 var remoteDtlsParameters = SDPUtils.getDtlsParameters(
                     mediaSection, sessionpart);
                 if (isIceLite) {
                   remoteDtlsParameters.role = 'server';
                 }
-                dtlsTransport.start(remoteDtlsParameters);
+
+                if (!self.usingBundle || sdpMLineIndex === 0) {
+                  iceTransport.start(iceGatherer, remoteIceParameters,
+                      isIceLite ? 'controlling' : 'controlled');
+                  dtlsTransport.start(remoteDtlsParameters);
+                }
 
                 // Calculate intersection of capabilities.
                 var params = self._getCommonCapabilities(localCapabilities,
@@ -1544,6 +1555,8 @@ var edgeShim = {
           var sessionpart = sections.shift();
           var isIceLite = SDPUtils.matchPrefix(sessionpart,
               'a=ice-lite').length > 0;
+          this.usingBundle = SDPUtils.matchPrefix(sessionpart,
+              'a=group:BUNDLE ').length > 0;
           sections.forEach(function(mediaSection, sdpMLineIndex) {
             var lines = SDPUtils.splitLines(mediaSection);
             var mline = lines[0].substr(2).split(' ');
@@ -1607,13 +1620,25 @@ var edgeShim = {
                   return cand.component === '1';
                 });
             if (description.type === 'offer' && !rejected) {
-              var transports = self._createIceAndDtlsTransports(mid,
-                  sdpMLineIndex);
+              var transports = self.usingBundle && sdpMLineIndex > 0 ? {
+                iceGatherer: self.transceivers[0].iceGatherer,
+                iceTransport: self.transceivers[0].iceTransport,
+                dtlsTransport: self.transceivers[0].dtlsTransport
+              } : self._createIceAndDtlsTransports(mid, sdpMLineIndex);
+
               if (isComplete) {
                 transports.iceTransport.setRemoteCandidates(cands);
               }
 
               localCapabilities = RTCRtpReceiver.getCapabilities(kind);
+
+              // filter RTX until additional stuff needed for RTX is implemented
+              // in adapter.js
+              localCapabilities.codecs = localCapabilities.codecs.filter(
+                  function(codec) {
+                return codec.name !== 'rtx';
+              });
+
               sendEncodingParameters = [{
                 ssrc: (2 * sdpMLineIndex + 2) * 1001
               }];
@@ -1671,12 +1696,14 @@ var edgeShim = {
                   remoteCapabilities;
               self.transceivers[sdpMLineIndex].cname = cname;
 
-              if (isIceLite || isComplete) {
+              if ((isIceLite || isComplete) && cands.length) {
                 iceTransport.setRemoteCandidates(cands);
               }
-              iceTransport.start(iceGatherer, remoteIceParameters,
-                  'controlling');
-              dtlsTransport.start(remoteDtlsParameters);
+              if (!self.usingBundle || sdpMLineIndex === 0) {
+                iceTransport.start(iceGatherer, remoteIceParameters,
+                    'controlling');
+                dtlsTransport.start(remoteDtlsParameters);
+              }
 
               self._transceive(transceiver,
                   direction === 'sendrecv' || direction === 'recvonly',
@@ -1909,9 +1936,20 @@ var edgeShim = {
         var kind = mline.kind;
         var mid = SDPUtils.generateIdentifier();
 
-        var transports = self._createIceAndDtlsTransports(mid, sdpMLineIndex);
+        var transports = self.usingBundle && sdpMLineIndex > 0 ? {
+          iceGatherer: transceivers[0].iceGatherer,
+          iceTransport: transceivers[0].iceTransport,
+          dtlsTransport: transceivers[0].dtlsTransport
+        } : self._createIceAndDtlsTransports(mid, sdpMLineIndex);
 
         var localCapabilities = RTCRtpSender.getCapabilities(kind);
+        // filter RTX until additional stuff needed for RTX is implemented
+        // in adapter.js
+        localCapabilities.codecs = localCapabilities.codecs.filter(
+            function(codec) {
+          return codec.name !== 'rtx';
+        });
+
         var rtpSender;
         var rtpReceiver;
 
@@ -1940,6 +1978,13 @@ var edgeShim = {
           sendEncodingParameters: sendEncodingParameters,
           recvEncodingParameters: null
         };
+      });
+      if (this.usingBundle) {
+        sdp += 'a=group:BUNDLE ' + transceivers.map(function(t) {
+          return t.mid;
+        }).join(' ') + '\r\n';
+      }
+      tracks.forEach(function(mline, sdpMLineIndex) {
         var transceiver = transceivers[sdpMLineIndex];
         sdp += SDPUtils.writeMediaSection(transceiver,
             transceiver.localCapabilities, 'offer', self.localStreams[0]);
@@ -1960,6 +2005,11 @@ var edgeShim = {
       var self = this;
 
       var sdp = SDPUtils.writeSessionBoilerplate();
+      if (this.usingBundle) {
+        sdp += 'a=group:BUNDLE ' + this.transceivers.map(function(t) {
+          return t.mid;
+        }).join(' ') + '\r\n';
+      }
       this.transceivers.forEach(function(transceiver) {
         // Calculate intersection of capabilities.
         var commonCapabilities = self._getCommonCapabilities(
@@ -1983,7 +2033,7 @@ var edgeShim = {
     window.RTCPeerConnection.prototype.addIceCandidate = function(candidate) {
       if (candidate === null) {
         this.transceivers.forEach(function(transceiver) {
-          transceiver.iceTransport.addIceCandidate({});
+          transceiver.iceTransport.addRemoteCandidate({});
         });
       } else {
         var mLineIndex = candidate.sdpMLineIndex;
@@ -2260,109 +2310,6 @@ var firefoxShim = {
     };
   },
 
-  shimGetUserMedia: function() {
-    // getUserMedia constraints shim.
-    var getUserMedia_ = function(constraints, onSuccess, onError) {
-      var constraintsToFF37_ = function(c) {
-        if (typeof c !== 'object' || c.require) {
-          return c;
-        }
-        var require = [];
-        Object.keys(c).forEach(function(key) {
-          if (key === 'require' || key === 'advanced' ||
-              key === 'mediaSource') {
-            return;
-          }
-          var r = c[key] = (typeof c[key] === 'object') ?
-              c[key] : {ideal: c[key]};
-          if (r.min !== undefined ||
-              r.max !== undefined || r.exact !== undefined) {
-            require.push(key);
-          }
-          if (r.exact !== undefined) {
-            if (typeof r.exact === 'number') {
-              r. min = r.max = r.exact;
-            } else {
-              c[key] = r.exact;
-            }
-            delete r.exact;
-          }
-          if (r.ideal !== undefined) {
-            c.advanced = c.advanced || [];
-            var oc = {};
-            if (typeof r.ideal === 'number') {
-              oc[key] = {min: r.ideal, max: r.ideal};
-            } else {
-              oc[key] = r.ideal;
-            }
-            c.advanced.push(oc);
-            delete r.ideal;
-            if (!Object.keys(r).length) {
-              delete c[key];
-            }
-          }
-        });
-        if (require.length) {
-          c.require = require;
-        }
-        return c;
-      };
-      constraints = JSON.parse(JSON.stringify(constraints));
-      if (browserDetails.version < 38) {
-        logging('spec: ' + JSON.stringify(constraints));
-        if (constraints.audio) {
-          constraints.audio = constraintsToFF37_(constraints.audio);
-        }
-        if (constraints.video) {
-          constraints.video = constraintsToFF37_(constraints.video);
-        }
-        logging('ff37: ' + JSON.stringify(constraints));
-      }
-      return navigator.mozGetUserMedia(constraints, onSuccess, onError);
-    };
-
-    navigator.getUserMedia = getUserMedia_;
-
-    // Returns the result of getUserMedia as a Promise.
-    var getUserMediaPromise_ = function(constraints) {
-      return new Promise(function(resolve, reject) {
-        navigator.getUserMedia(constraints, resolve, reject);
-      });
-    };
-
-    // Shim for mediaDevices on older versions.
-    if (!navigator.mediaDevices) {
-      navigator.mediaDevices = {getUserMedia: getUserMediaPromise_,
-        addEventListener: function() { },
-        removeEventListener: function() { }
-      };
-    }
-    navigator.mediaDevices.enumerateDevices =
-        navigator.mediaDevices.enumerateDevices || function() {
-          return new Promise(function(resolve) {
-            var infos = [
-              {kind: 'audioinput', deviceId: 'default', label: '', groupId: ''},
-              {kind: 'videoinput', deviceId: 'default', label: '', groupId: ''}
-            ];
-            resolve(infos);
-          });
-        };
-
-    if (browserDetails.version < 41) {
-      // Work around http://bugzil.la/1169665
-      var orgEnumerateDevices =
-          navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
-      navigator.mediaDevices.enumerateDevices = function() {
-        return orgEnumerateDevices().then(undefined, function(e) {
-          if (e.name === 'NotFoundError') {
-            return [];
-          }
-          throw e;
-        });
-      };
-    }
-  },
-
   // Attach a media stream to an element.
   attachMediaStream: function(element, stream) {
     logging('DEPRECATED, attachMediaStream will soon be removed.');
@@ -2479,12 +2426,10 @@ module.exports = function() {
     });
   };
 
-  navigator.getUserMedia = getUserMedia_;
-
   // Returns the result of getUserMedia as a Promise.
   var getUserMediaPromise_ = function(constraints) {
     return new Promise(function(resolve, reject) {
-      navigator.getUserMedia(constraints, resolve, reject);
+      getUserMedia_(constraints, resolve, reject);
     });
   };
 
@@ -2528,6 +2473,15 @@ module.exports = function() {
       });
     };
   }
+  navigator.getUserMedia = function(constraints, onSuccess, onError) {
+    if (browserDetails.version < 44) {
+      return getUserMedia_(constraints, onSuccess, onError);
+    }
+    // Replace Firefox 44+'s deprecation warning with unprefixed version.
+    console.warn('navigator.getUserMedia has been replaced by ' +
+                 'navigator.mediaDevices.getUserMedia');
+    navigator.mediaDevices.getUserMedia(constraints).then(onSuccess, onError);
+  };
 };
 
 },{"../utils":10}],9:[function(require,module,exports){
