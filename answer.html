@@ -8,62 +8,46 @@ video: {
   height: 240px;
 }
 </style>
-<script src='adapter-latest.js'></script>
-<video id='localVideo' autoplay muted></video>
-<video id='remoteVideo' autoplay></video>
+<script src="https://webrtchacks.github.io/adapter/adapter-latest.js"></script>
+<video id="localVideo" autoplay muted></video>
+<video id="remoteVideo" autoplay></video>
 <div>
-  <p>PASTE OFFER<button id='paste'>set remote description</button><input type='checkbox' id='gum'>add stream</input></p>
-  <textarea id='offer'></textarea>
+  <p><button id="paste">Paste offer and set remote description</button><input type="checkbox" id="gum">add stream</input></p>
+  <textarea id="offer" disabled></textarea>
 </div>
 <div>
-  <p>ANSWER</p>
-  <textarea id='answer'></textarea>
+  <p><button id="copy-answer">copy answer</button></p>
+  <textarea id="answer" disabled></textarea>
 </div>
-<div id='ice'></div>
-<div id='err'></div>
+<div id="ice"></div>
+<div id="err"></div>
 <script>
 var pc = new RTCPeerConnection();
 var localStream;
-pc.onicecandidate = function(event) {
-  if (!event.candidate) {
-    var sdp = pc.localDescription.sdp;
-    if (sdp.indexOf('a=end-of-candidates') === -1) {
-      sdp += 'a=end-of-candidates\r\n';
-    }
-    document.getElementById('answer').value = sdp;
-    
-  }
+pc.onicegatheringstatechange = (event) => {
+  if (pc.iceGatheringState !== 'complete') return;
+  document.getElementById('answer').value = pc.localDescription.sdp;
 }
-pc.oniceconnectionstatechange = function() {
+pc.oniceconnectionstatechange = () => {
   ice.innerText = pc.iceConnectionState;
 };
-pc.onaddstream = function(event) {
+pc.onaddstream = (event) => {
     remoteVideo.srcObject = event.stream;
 };
 
-document.getElementById('paste').onclick = function() {
-  var sdp = document.getElementById('offer').value;
-  pc.setRemoteDescription({type: 'offer', sdp: sdp})
-  .then(function() {
-    console.log('yay');
-    if (document.getElementById('gum').checked) {
-      return navigator.mediaDevices.getUserMedia({audio: true, video: true})
-      .then(function(stream) {
-        localStream = stream;
-        localVideo.srcObject = stream;
-        pc.addStream(stream);
-        return pc.createAnswer();
-      });
-    } else {
-      return pc.createAnswer();
-    }
-  })
-  .then(function(answer) {
-     return pc.setLocalDescription(answer); 
-   })
-  .catch(function(e) {
-    console.log(e);
-    err.innerText = e.toString();
-  });
+document.getElementById('paste').onclick = async () => {
+  const sdp = await navigator.clipboard.readText();
+  document.getElementById('offer').value = sdp;
+  await pc.setRemoteDescription({type: 'offer', sdp})
+  if (document.getElementById('gum').checked) {
+    localStream = await navigator.mediaDevices.getUserMedia({audio: true, video: true})
+    localVideo.srcObject = localStream;
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+  }
+  await pc.setLocalDescription();
 }
+
+document.getElementById('copy-answer').onclick = () => {
+  navigator.clipboard.writeText(pc.localDescription.sdp);
+};
 </script>
