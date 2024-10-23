@@ -12,11 +12,11 @@ video {
 <video id="localVideo" autoplay muted></video>
 <video id="remoteVideo" autoplay></video>
 <div>
-  <p>OFFER <button id="copy-offer">copy</button></p>
+  <p>OFFER <button id="copy-offer" disabled>copy</button></p>
   <textarea id="offer" disabled></textarea>
 </div>
 <div>
-  <p><button id="paste-answer">paste answer and set remote description</button></p>
+  <p><button id="paste-answer" disabled>paste answer and set remote description</button></p>
   <textarea id="answer" disabled></textarea>
 </div>
 <div id="ice"></div>
@@ -43,6 +43,7 @@ navigator.mediaDevices.getUserMedia({audio: true, video: true})
   localVideo.srcObject = stream;
   stream.getTracks().forEach(t => pc.addTrack(t, stream));
   await pc.setLocalDescription();
+  document.getElementById('copy-offer').disabled = false;
 })
 .catch((e) => {
   console.log(e);
@@ -53,9 +54,11 @@ document.getElementById('paste-answer').onclick = async () => {
   const sdp = await navigator.clipboard.readText();
   document.getElementById('answer').value = sdp;
   await pc.setRemoteDescription({type: 'answer', sdp});
+  document.getElementById('paste-answer').disabled = true;
 };
 
 document.getElementById('copy-offer').onclick = () => {
   navigator.clipboard.writeText(pc.localDescription.sdp);
+  document.getElementById('paste-answer').disabled = false;
 };
 </script>

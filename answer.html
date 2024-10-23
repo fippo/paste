@@ -12,11 +12,11 @@ video {
 <video id="localVideo" autoplay muted></video>
 <video id="remoteVideo" autoplay></video>
 <div>
-  <p><button id="paste">Paste offer and set remote description</button><input type="checkbox" id="gum">add stream</input></p>
+  <p><button id="paste-offer">Paste offer and set remote description</button><input type="checkbox" id="gum">add stream</input></p>
   <textarea id="offer" disabled></textarea>
 </div>
 <div>
-  <p><button id="copy-answer">copy answer</button></p>
+  <p><button id="copy-answer" disabled>copy answer</button></p>
   <textarea id="answer" disabled></textarea>
 </div>
 <div id="ice"></div>
@@ -35,7 +35,7 @@ pc.onaddstream = (event) => {
     remoteVideo.srcObject = event.stream;
 };
 
-document.getElementById('paste').onclick = async () => {
+document.getElementById('paste-offer').onclick = async () => {
   const sdp = await navigator.clipboard.readText();
   document.getElementById('offer').value = sdp;
   await pc.setRemoteDescription({type: 'offer', sdp})
@@ -45,6 +45,8 @@ document.getElementById('paste').onclick = async () => {
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
   }
   await pc.setLocalDescription();
+  document.getElementById('paste-offer').disabled = true;
+  document.getElementById('copy-answer').disabled = false;
 }
 
 document.getElementById('copy-answer').onclick = () => {
